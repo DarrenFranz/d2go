@@ -2,16 +2,19 @@ package memory
 
 import (
 	"fmt"
+	"log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 )
 
 type GameReader struct {
 	offset Offset
-	Process
+	*Process
 
 	monstersLastUpdate  time.Time
 	inventoryLastUpdate time.Time
@@ -22,11 +25,21 @@ type GameReader struct {
 	cachedObjects   []data.Object
 }
 
+type MercOption struct {
+	Index   int
+	Name    string
+	Skill   skill.Skill
+	Level   int
+	Life    int
+	Defense int
+	Cost    int
+}
+
 var WidgetStateFlags = map[string]uint64{
 	"WeaponSwap": 0xF2D7CF8E9CC08212,
 }
 
-func NewGameReader(process Process) *GameReader {
+func NewGameReader(process *Process) *GameReader {
 	return &GameReader{
 		offset:              calculateOffsets(process),
 		Process:             process,
@@ -84,7 +97,7 @@ func (gd *GameReader) GetData() data.Data {
 	// q1 := uintptr(gd.Process.ReadUInt(gd.moduleBaseAddressPtr+0x22E2978, Uint64))
 	// q2 := uintptr(gd.Process.ReadUInt(q1, Uint64))
 	// q2 := uintptr(gd.Process.ReadUInt(gd.moduleBaseAddressPtr+0x22F1E79, Uint64))
-	gameQuestsBytes := gd.Process.ReadBytesFromMemory(gd.moduleBaseAddressPtr+0x22F1E79, 85)
+	gameQuestsBytes := gd.Process.ReadBytesFromMemory(gd.moduleBaseAddressPtr+gd.offset.Quests, 85)
 	// gameQuestsBytes = gameQuestsBytes[3:]
 
 	d := data.Data{
@@ -98,6 +111,7 @@ func (gd *GameReader) GetData() data.Data {
 			LastGameName:     gd.LastGameName(),
 			LastGamePassword: gd.LastGamePass(),
 			FPS:              gd.FPS(),
+			Ping:             gd.Ping(),
 		},
 		Monsters:       monsters,
 		Corpses:        gd.Corpses(pu.Position, hover),
@@ -124,6 +138,12 @@ func (gd *GameReader) GetData() data.Data {
 	}
 
 	return d
+}
+
+func (gd *GameReader) GetInventory() data.Inventory {
+	rawPlayerUnits := gd.GetRawPlayerUnits()
+	hover := gd.HoveredData()
+	return gd.Inventory(rawPlayerUnits, hover)
 }
 
 func (gd *GameReader) InGame() bool {
@@ -233,7 +253,9 @@ func (gd *GameReader) getStatsList(statListPtr uintptr) stat.Stats {
 			stat.ManaPerLevel:
 			value = int(math.Max(float64(statValue/2048), 1))
 		case stat.ReplenishDurability, stat.ReplenishQuantity:
-			value = int(math.Max(float64(2/statValue), 1))
+			if statValue > 0 {
+				value = int(math.Max(float64(2/statValue), 1))
+			}
 		case stat.RegenStaminaPerLevel:
 			value = int(statValue) * 10
 
@@ -289,11 +311,11 @@ func (gd *GameReader) InCharacterSelectionScreen() bool {
 }
 
 func (gd *GameReader) GetSelectedCharacterName() string {
-	return gd.Process.ReadStringFromMemory(gd.Process.moduleBaseAddressPtr+0x222D0A8, 0)
+	return gd.Process.ReadStringFromMemory(gd.Process.moduleBaseAddressPtr+0x21D31A8, 0)
 }
 
 func (gd *GameReader) LegacyGraphics() bool {
-	return gd.ReadUInt(gd.moduleBaseAddressPtr+0x2227998, Uint64) == 1
+	return gd.ReadUInt(gd.Process.moduleBaseAddressPtr+gd.offset.LegacyGraphics, Uint8) != 0
 }
 
 func (gd *GameReader) IsOnline() bool {
@@ -302,7 +324,7 @@ func (gd *GameReader) IsOnline() bool {
 }
 
 func (gd *GameReader) IsIngame() bool {
-	return gd.ReadUInt(gd.moduleBaseAddressPtr+0x22E51D0, 1) == 1
+	return gd.ReadUInt(gd.Process.moduleBaseAddressPtr+gd.offset.UI-0xA, 1) == 1
 }
 
 func (gd *GameReader) IsInLobby() bool {
@@ -335,6 +357,58 @@ func (gd *GameReader) GetCharacterList() []string {
 	return characterNames
 }
 
+// GetMercList returns the list of mercenaries available for hire in the Hire Menu
+// Only works if the Hire Menu is open in legacy graphics mode
+func (gd *GameReader) GetMercList() []MercOption {
+	panel := gd.GetPanel("HireMenuPanel", "ListContainer", "View", "Container")
+
+	if panel.PanelName == "" || panel.NumChildren == 0 {
+		return []MercOption{}
+	}
+
+	mercOptions := make([]MercOption, panel.NumChildren)
+
+	for i := 0; i < panel.NumChildren; i++ {
+		merc := panel.PanelChildren[fmt.Sprintf("ListItem%d", i)].PanelChildren["TextBox"].ExtraText3
+
+		var name, skillName string
+		var level, life, def, cost int
+
+		n, err := fmt.Sscanf(merc, "%s - Lvl: %d  Life: %d  Def: %d  Cost: %d\n", &name, &level, &life, &def, &cost)
+		if err != nil || n < 5 {
+			continue
+		}
+
+		lines := strings.Split(merc, "\n")
+		skillName = strings.TrimSpace(lines[1])
+		sk := skill.Skill{}
+
+		for _, s := range skill.Skills {
+			if s.Name == skillName {
+				sk = s
+				break
+			}
+		}
+
+		if sk.Name == "" {
+			log.Printf("Unknown merc skill: %s", skillName)
+			continue
+		}
+
+		mercOptions[i] = MercOption{
+			Index:   i,
+			Name:    name,
+			Skill:   sk,
+			Level:   level,
+			Life:    life,
+			Defense: def,
+			Cost:    cost,
+		}
+	}
+
+	return mercOptions
+}
+
 // IsBlocking checks if there's a blocking popup or loading screen present
 func (gd *GameReader) IsBlocking() bool {
 	panel := gd.GetPanel("BlockingPanel")
@@ -357,19 +431,25 @@ func (gd *GameReader) IsDismissableModalPresent() (bool, string) {
 }
 
 func (gd *GameReader) LastGameName() string {
-	return gd.ReadStringFromMemory(gd.moduleBaseAddressPtr+0x2587FB8, 0)
+	return gd.ReadStringFromMemory(gd.moduleBaseAddressPtr+0x256E668, 0)
 }
 
 func (gd *GameReader) LastGamePass() string {
-	return gd.ReadStringFromMemory(gd.moduleBaseAddressPtr+0x2588018, 0)
+	return gd.ReadStringFromMemory(gd.moduleBaseAddressPtr+0x256E6C8, 0)
 }
 
 func (gd *GameReader) FPS() int {
 	return int(gd.ReadUInt(gd.moduleBaseAddressPtr+gd.offset.FPS, Uint32))
 }
 
+func (gd *GameReader) Ping() int {
+	ptrToStructPtr := gd.moduleBaseAddressPtr + gd.offset.Ping
+	structPtrAddr := gd.ReadUInt(ptrToStructPtr, Uint64)
+	return int(gd.ReadUInt(uintptr(structPtrAddr+36), Uint32))
+}
+
 func (gd *GameReader) HasMerc() bool {
-	return gd.ReadUInt(gd.moduleBaseAddressPtr+0x22e51d0+0x12, Uint8) != 0
+	return gd.ReadUInt(gd.Process.moduleBaseAddressPtr+gd.offset.UI+0x8, Uint8) != 0
 }
 
 // GetWidgetState reference : https://github.com/ResurrectedTrader/ResurrectedTrade/blob/f121ec02dd3fbe1c574f713e5a0c2db92ccca821/ResurrectedTrade.AgentBase/Capture.cs#L618
