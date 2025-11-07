@@ -1,4 +1,4 @@
-module github.com/hectorgimenez/d2go
+module github.com/DarrenFranz/d2go
 
 go 1.22
 
