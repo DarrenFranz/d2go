@@ -55,6 +55,13 @@ type Room struct {
     Height int
 }
 
+func (r Room) IsInside(p Position) bool {
+    return p.X >= r.Position.X &&
+        p.Y >= r.Position.Y &&
+        p.X < r.Position.X+r.Width &&
+        p.Y < r.Position.Y+r.Height
+}
+
 type HoverData struct {
     IsHovered bool
     UnitID    UnitID
