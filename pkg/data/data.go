@@ -50,27 +50,27 @@ type Data struct {
 }
 
 type Room struct {
-    Position
-    Width  int
-    Height int
+	Position
+	Width  int
+	Height int
 }
 
 // GetCenter returns the center point of the room.
-// Required by koolo's pather (render_map.go, utils.go).
+// Koolo's pather (render_map.go, utils.go) depends on this.
 func (r Room) GetCenter() Position {
-    return Position{
-        X: r.Position.X + r.Width/2,
-        Y: r.Position.Y + r.Height/2,
-    }
+	return Position{
+		X: r.Position.X + r.Width/2,
+		Y: r.Position.Y + r.Height/2,
+	}
 }
 
-// IsInside reports whether p is inside the room bounds.
-// Used by koolo for boss room / area checks.
+// IsInside reports whether p is inside this room.
+// Used by Koolo for room/boss checks.
 func (r Room) IsInside(p Position) bool {
-    return p.X >= r.Position.X &&
-        p.Y >= r.Position.Y &&
-        p.X < r.Position.X+r.Width &&
-        p.Y < r.Position.Y+r.Height
+	return p.X >= r.Position.X &&
+		p.Y >= r.Position.Y &&
+		p.X < r.Position.X+r.Width &&
+		p.Y < r.Position.Y+r.Height
 }
 
 type HoverData struct {
