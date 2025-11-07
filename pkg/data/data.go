@@ -55,6 +55,8 @@ type Room struct {
     Height int
 }
 
+// GetCenter returns the center point of the room.
+// Required by koolo's pather (render_map.go, utils.go).
 func (r Room) GetCenter() Position {
     return Position{
         X: r.Position.X + r.Width/2,
@@ -62,6 +64,8 @@ func (r Room) GetCenter() Position {
     }
 }
 
+// IsInside reports whether p is inside the room bounds.
+// Used by koolo for boss room / area checks.
 func (r Room) IsInside(p Position) bool {
     return p.X >= r.Position.X &&
         p.Y >= r.Position.Y &&
