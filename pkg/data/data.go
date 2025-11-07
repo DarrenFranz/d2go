@@ -55,6 +55,13 @@ type Room struct {
     Height int
 }
 
+func (r Room) GetCenter() Position {
+    return Position{
+        X: r.Position.X + r.Width/2,
+        Y: r.Position.Y + r.Height/2,
+    }
+}
+
 func (r Room) IsInside(p Position) bool {
     return p.X >= r.Position.X &&
         p.Y >= r.Position.Y &&
